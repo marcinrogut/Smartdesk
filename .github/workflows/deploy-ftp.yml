@@ -1,0 +1,148 @@
+name: Build and deploy to FTP
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: laravel-api
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup PHP 8.3
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mbstring, dom, fileinfo, json, libxml, sqlite3, pdo_sqlite, zip, curl
+          tools: composer
+          coverage: none
+
+      - name: Install dependencies
+        run: composer install --no-progress --prefer-dist --optimize-autoloader
+
+      - name: Prepare environment
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+
+      - name: Run tests
+        run: php artisan test
+
+  deploy:
+    name: Deploy to FTP
+    needs: test
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Ścieżki docelowe ustawiane w Settings -> Secrets and variables -> Actions -> Variables.
+      - name: Verify FTP variables are set
+        env:
+          FTP_PROJECT_ROOT: ${{ vars.FTP_PROJECT_ROOT }}
+          FTP_DEPLOY_PATH: ${{ vars.FTP_DEPLOY_PATH }}
+        run: |
+          if [ -z "$FTP_PROJECT_ROOT" ]; then echo "::error::Brak repo variable FTP_PROJECT_ROOT"; exit 1; fi
+          if [ -z "$FTP_DEPLOY_PATH" ]; then echo "::error::Brak repo variable FTP_DEPLOY_PATH"; exit 1; fi
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: angular-web/package-lock.json
+
+      - name: Build Angular app
+        working-directory: angular-web
+        run: |
+          npm ci
+          npm run build
+
+      - name: Setup PHP 8.3
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mbstring, dom, fileinfo, json, libxml, sqlite3, pdo_sqlite, zip, curl
+          tools: composer
+          coverage: none
+
+      - name: Install production PHP dependencies
+        working-directory: laravel-api
+        run: composer install --no-dev --no-progress --prefer-dist --optimize-autoloader
+
+      - name: Install lftp
+        run: sudo apt-get update && sudo apt-get install -y lftp
+
+      # Angular (SPA) -> webroot.
+      # Uwaga: --delete usuwa zdalne pliki nieobecne w buildzie. Ustaw FTP_DEPLOY_PATH
+      # na katalog, który należy w całości do frontendu.
+      - name: Deploy Angular build to webroot
+        env:
+          FTP_SERVER: ${{ secrets.FTP_SERVER }}
+          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+          FTP_DEPLOY_PATH: ${{ vars.FTP_DEPLOY_PATH }}
+        run: |
+          lftp -u "$FTP_USERNAME","$FTP_PASSWORD" "$FTP_SERVER" -e "
+            set ftp:ssl-force true;
+            set ftp:ssl-protect-data true;
+            set ssl:verify-certificate false;
+            set net:socket-bind-ipv4 true;
+            set ftp:use-ipv6 false;
+            mkdir -p $FTP_DEPLOY_PATH;
+            lcd angular-web/dist/angular-web/browser;
+            cd $FTP_DEPLOY_PATH;
+            mirror -R --delete --verbose . .;
+            bye
+          "
+
+      # Backend Laravela -> katalog projektu (rodzeństwo webroota).
+      - name: Deploy Laravel backend to project root
+        env:
+          FTP_SERVER: ${{ secrets.FTP_SERVER }}
+          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+          FTP_PROJECT_ROOT: ${{ vars.FTP_PROJECT_ROOT }}
+        run: |
+          lftp -u "$FTP_USERNAME","$FTP_PASSWORD" "$FTP_SERVER" -e "
+            set ftp:ssl-force true;
+            set ftp:ssl-protect-data true;
+            set ssl:verify-certificate false;
+            set net:socket-bind-ipv4 true;
+            set ftp:use-ipv6 false;
+            mkdir -p $FTP_PROJECT_ROOT;
+            cd $FTP_PROJECT_ROOT;
+            mirror -R --delete --verbose --no-empty-dirs app app;
+            mirror -R --delete --verbose --no-empty-dirs bootstrap bootstrap;
+            mirror -R --delete --verbose --no-empty-dirs config config;
+            mirror -R --delete --verbose --no-empty-dirs database database;
+            mirror -R --delete --verbose --no-empty-dirs public public;
+            mirror -R --delete --verbose --no-empty-dirs resources resources;
+            mirror -R --delete --verbose --no-empty-dirs routes routes;
+            mirror -R --delete --verbose --no-empty-dirs storage storage;
+            mirror -R --delete --verbose --no-empty-dirs vendor vendor;
+            put composer.json;
+            put composer.lock;
+            put artisan;
+            bye
+          "
+
+      - name: Deployment summary
+        if: always()
+        run: |
+          echo "## Deployment" >> $GITHUB_STEP_SUMMARY
+          echo "- Branch: \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Commit: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Author: @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
