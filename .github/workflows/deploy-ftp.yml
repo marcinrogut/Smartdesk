@@ -94,8 +94,6 @@ jobs:
             set ftp:ssl-force true;
             set ftp:ssl-protect-data true;
             set ssl:verify-certificate false;
-            set net:socket-bind-ipv4 true;
-            set ftp:use-ipv6 false;
             mkdir -p $FTP_DEPLOY_PATH;
             lcd laravel-api/public;
             cd $FTP_DEPLOY_PATH;
@@ -116,8 +114,6 @@ jobs:
             set ftp:ssl-force true;
             set ftp:ssl-protect-data true;
             set ssl:verify-certificate false;
-            set net:socket-bind-ipv4 true;
-            set ftp:use-ipv6 false;
             mkdir -p $FTP_DEPLOY_PATH/app;
             lcd angular-web/dist/angular-web/browser;
             cd $FTP_DEPLOY_PATH/app;
@@ -127,6 +123,7 @@ jobs:
 
       # Backend Laravela -> katalog projektu (rodzeństwo webroota, poza public_html).
       # public/ nie jest tu wysyłane: jego zawartość trafia do FTP_DEPLOY_PATH.
+      # uwaga: katalog lokalny to laravel-api/, stąd lcd.
       - name: Deploy Laravel backend to project root
         env:
           FTP_SERVER: ${{ secrets.FTP_SERVER }}
@@ -138,10 +135,9 @@ jobs:
             set ftp:ssl-force true;
             set ftp:ssl-protect-data true;
             set ssl:verify-certificate false;
-            set net:socket-bind-ipv4 true;
-            set ftp:use-ipv6 false;
             mkdir -p $FTP_PROJECT_ROOT;
             cd $FTP_PROJECT_ROOT;
+            lcd laravel-api;
             mirror -R --delete --verbose --no-empty-dirs app app;
             mirror -R --delete --verbose --no-empty-dirs bootstrap bootstrap;
             mirror -R --delete --verbose --no-empty-dirs config config;
