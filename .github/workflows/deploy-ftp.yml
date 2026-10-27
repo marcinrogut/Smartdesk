@@ -42,20 +42,14 @@ jobs:
   deploy:
     name: Deploy to FTP
     needs: test
+    # Wymaga repo variables (Settings -> Secrets and variables -> Actions -> Variables):
+    # FTP_PROJECT_ROOT, FTP_DEPLOY_PATH. Dopóki ich nie ma, deploy jest pomijany.
+    if: vars.FTP_PROJECT_ROOT != '' && vars.FTP_DEPLOY_PATH != ''
     runs-on: ubuntu-latest
     environment: production
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      # Ścieżki docelowe ustawiane w Settings -> Secrets and variables -> Actions -> Variables.
-      - name: Verify FTP variables are set
-        env:
-          FTP_PROJECT_ROOT: ${{ vars.FTP_PROJECT_ROOT }}
-          FTP_DEPLOY_PATH: ${{ vars.FTP_DEPLOY_PATH }}
-        run: |
-          if [ -z "$FTP_PROJECT_ROOT" ]; then echo "::error::Brak repo variable FTP_PROJECT_ROOT"; exit 1; fi
-          if [ -z "$FTP_DEPLOY_PATH" ]; then echo "::error::Brak repo variable FTP_DEPLOY_PATH"; exit 1; fi
 
       - name: Use Node.js 22
         uses: actions/setup-node@v4
