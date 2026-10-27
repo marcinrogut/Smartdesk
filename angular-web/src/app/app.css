@@ -1,0 +1,60 @@
+/* Enlarged mega-menu for home button */
+.mega-menu{position:absolute;top:62px;left:50%;width:min(560px,calc(100vw - 32px));min-height:230px;transform:translateX(-50%);padding:30px;background:#0b2038f7;border:1px solid #ffffff2d;border-top:0;border-radius:0 0 17px 17px;box-shadow:0 20px 40px #0007}
+
+.topbar{height:62px;display:flex;justify-content:space-between;align-items:center;padding:0 22px;background:#071828f2;border-bottom:1px solid #ffffff2b;transform:translateY(-100%);transition:transform .22s ease;box-shadow:0 8px 24px #0005}
+.menu-mark{font-size:23px;color:#d8e9f7}
+
+/* Global Container for Desktop View */
+.desktop {
+  min-height: 100vh;
+  padding: 32px 24px 24px;
+}
+
+.window {
+  min-height: auto;
+  padding: 0;
+  background: none;
+  border: none;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 0;
+  border-bottom: none;
+  color: #c7d9ea;
+}
+
+/* Icon/Item containers */
+.desktop-icon, .file-item {
+  display: flex !important; /* Use !important if needed to override specific library styles */
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 140px;
+  margin: 25px 12x;
+  padding: 14px;
+  background: transparent;
+  color: inherit;
+  text-align: center;
+}
+
+.home-button{grid-column:2;/* Removing grid layout properties to use flex */font-size:27px;line-height:1;width:46px;height:42px;padding:0;background:transparent;color:#fff}
+.home-button:hover{background:#ffffff1d}
+
+/* File grid layout */
+.file-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(135px, 1fr));
+  gap: 8px;
+  padding-top: 15px;
+}
+
+/* Ensure file items and desktop icons maintain their fixed structure */
+.file-item {
+    width: auto !important; /* Override any width restrictions for individual items in grid */
+    margin: 0;
+    min-height: 126px;
+}
+
