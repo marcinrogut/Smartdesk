@@ -1,0 +1,67 @@
+<div class="page-bg" aria-hidden="true"></div>
+
+<header class="site-header">
+  <div class="header-bar">
+    <a class="brand" routerLink="/" (click)="closeMenus()">
+      <span class="brand-mark" aria-hidden="true">🗂️</span>
+      <span class="brand-name">SmartDesk</span>
+    </a>
+  </div>
+
+  <nav class="main-nav" aria-label="Główna nawigacja">
+    <div class="nav-left">
+      @if (isAuthenticated()) {
+        <a class="nav-tab" routerLink="/desktop" routerLinkActive="is-active" (click)="closeMenus()">
+          🗂️ Mój dysk
+        </a>
+      } @else {
+        <a class="nav-tab" routerLink="/" routerLinkActive="is-active" [routerLinkActiveOptions]="{ exact: true }" (click)="closeMenus()">
+          🏠 Start
+        </a>
+      }
+    </div>
+
+    <div class="nav-right">
+      @if (isAuthenticated()) {
+        <div class="nav-dropdown" [class.is-open]="userMenuOpen()">
+          <button
+            type="button"
+            class="nav-tab nav-user-trigger"
+            aria-haspopup="true"
+            [attr.aria-expanded]="userMenuOpen()"
+            (click)="toggleUserMenu()"
+          >
+            @if (me(); as user) {
+              <img class="user-avatar" [src]="avatarUrl(user.username)" [alt]="user.username" />
+              <span>{{ user.username }}</span>
+            } @else {
+              <span>Konto</span>
+            }
+            <span aria-hidden="true">▼</span>
+          </button>
+          <div class="nav-dropdown-menu" role="menu">
+            @if (isAdmin()) {
+              <a class="nav-dropdown-item" routerLink="/admin/users" routerLinkActive="is-active" role="menuitem" (click)="closeMenus()">
+                ⚙️ Użytkownicy
+              </a>
+              <hr />
+            }
+            <button type="button" class="nav-dropdown-item" role="menuitem" (click)="logout()">
+              🚪 Wylogowanie
+            </button>
+          </div>
+        </div>
+      } @else {
+        <a class="nav-tab" routerLink="/login" routerLinkActive="is-active" (click)="closeMenus()">Logowanie</a>
+      }
+    </div>
+  </nav>
+</header>
+
+<main class="container">
+  <router-outlet />
+</main>
+
+<footer class="site-footer">
+  <p>SmartDesk — Twoje pliki, foldery i udostępnianie w jednym miejscu.</p>
+</footer>

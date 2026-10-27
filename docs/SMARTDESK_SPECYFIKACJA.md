@@ -1,27 +1,40 @@
-# Smartdesk — dokumentacja projektu
+# SmartDesk — dokumentacja projektu
 
 ## Cel
 
-Smartdesk to aplikacja internetowa imitująca prosty, prywatny pulpit użytkownika. Nie jest to zdalny komputer ani środowisko do uruchamiania programów. Jej zadaniem jest bezpieczne przechowywanie i organizacja plików w interfejsie przypominającym pulpit systemu operacyjnego.
+SmartDesk to aplikacja internetowa imitująca prosty, prywatny pulpit użytkownika. Nie jest to zdalny komputer ani środowisko do uruchamiania programów. Jej zadaniem jest bezpieczne przechowywanie i organizacja plików w interfejsie przypominającym pulpit systemu operacyjnego.
 
-Użytkownik ma widzieć własne foldery i pliki, wysyłać oraz pobierać pliki, tworzyć foldery i usuwać elementy. Nie może uruchamiać programów, wydawać poleceń systemowych ani uzyskać dostępu do katalogów innych osób.
+Użytkownik widzi wyłącznie własne foldery i pliki, może wysyłać oraz pobierać pliki, tworzyć foldery i usuwać elementy. Nie może uruchamiać programów, wydawać poleceń systemowych ani uzyskać dostępu do katalogów innych osób.
 
-## Docelowy stos technologiczny
+## Stos technologiczny
 
-- **Backend:** PHP 8.3+ oraz Laravel.
-- **Frontend:** Angular.
-- **Baza danych:** MySQL lub MariaDB w środowisku produkcyjnym.
-- **Przechowywanie plików:** lokalny dysk serwera na początku, docelowo opcjonalnie S3 lub MinIO.
-- **Uwierzytelnianie:** Laravel Sanctum dla API używanego przez Angular.
+- **Backend:** PHP 8.2+ w czystej architekturze — bez frameworka, z cienkimi endpointami.
+- **Frontend:** Angular (standalone components, signals, `@if`/`@for`, lazy loading).
+- **Baza danych:** MySQL / MariaDB przez PDO.
+- **Przechowywanie plików:** lokalny dysk serwera (`storage/users/{id}`), za interfejsem `FileStorageInterface` umożliwiającym przyszłą implementację S3/MinIO.
+- **Uwierzytelnianie:** własny JWT HS256, przekazywany w nagłówku `Authorization: Bearer` i przechowywany w `localStorage`.
 
-Katalogi docelowe:
+## Struktura katalogów
 
 ```text
-Smartdesk/
-├── laravel-api/       # API, logowanie, baza danych, uprawnienia i pliki
-├── angular-web/       # interfejs użytkownika: pulpit i menedżer plików
-└── docs/              # dokumentacja
+SmartDesk/
+├── src/
+│   ├── Domain/           # encje, value objecty, interfejsy repozytoriów, wyjątki domenowe
+│   ├── Application/      # use case'y (handlery) i wyjątki aplikacyjne
+│   ├── Infrastructure/   # PDO, migracje, magazyn plików
+│   ├── Api/              # koperta odpowiedzi, JWT, middleware (CORS, auth)
+│   └── bootstrap.php     # autoload, .env, auto-migracja
+├── public/               # webroot: tylko endpointy API + zbudowany Angular
+│   └── api/v1/…          # cienkie endpointy wymagające bootstrapu
+├── config/database.php   # konfiguracja połączenia z bazą (env)
+├── database/schema.sql   # schemat tabeli users
+├── storage/users/        # prywatne pliki użytkowników (poza public/)
+├── tests/                # PHPUnit: Unit + Integration
+├── frontend/             # aplikacja Angular (src/app/core, src/app/features)
+└── .github/workflows/    # CI (build + testy) i deploy na FTP
 ```
+
+Zasada: **logika biznesowa nie zna HTTP ani PDO**. Endpoint w `public/api/v1/` tylko odczytuje wejście, woła handler i serializuje wynik przez `ApiResponse`.
 
 ## Role i najważniejsza reguła administratora
 
@@ -30,12 +43,12 @@ Istnieją dwie role:
 - `user` — korzysta wyłącznie z własnych plików;
 - `admin` — tworzy konta i zarządza kontami.
 
-W systemie może być tylko **jeden aktywny administrator**. Przy tworzeniu nowego konta administratora należy:
+W systemie może być tylko **jeden aktywny administrator**. Przy tworzeniu nowego konta administratora:
 
-1. utworzyć nowe konto z rolą `admin` i statusem aktywnym;
-2. wyłączyć wszystkie poprzednie konta z rolą `admin`;
-3. unieważnić sesje/tokenu poprzedniego administratora;
-4. pozostawić nowego administratora jako jedyne aktywne konto administracyjne.
+1. tworzone jest nowe konto z rolą `admin` i statusem aktywnym;
+2. wszystkie poprzednie konta z rolą `admin` są wyłączane (`disableAdminsExcept`);
+3. stan konta (`enabled`) jest sprawdzany przy każdym żądaniu, więc tokeny poprzedniego administratora natychmiast tracą ważność;
+4. nowy administrator pozostaje jedynym aktywnym kontem administracyjnym.
 
 Domyślne dane dla lokalnego środowiska demonstracyjnego:
 
@@ -44,129 +57,113 @@ login: admin
 hasło: admin
 ```
 
-W wersji produkcyjnej należy wymusić zmianę tego hasła przy pierwszym logowaniu.
+Konto zakładane automatycznie tylko wtedy, gdy w bazie nie ma żadnego użytkownika. W wersji produkcyjnej należy zmienić hasło zaraz po pierwszym logowaniu.
 
 ## Dane i katalogi użytkowników
 
-Każdy użytkownik otrzymuje prywatny katalog, na przykład:
-
 ```text
-storage/app/private/users/{userId}/
+storage/users/{userId}/
 ├── Documents/
 ├── Pictures/
 └── Downloads/
 ```
 
-Ścieżka do pliku nigdy nie może być zaufana, jeżeli pochodzi wprost z przeglądarki. Backend wyznacza katalog główny na podstawie zalogowanego użytkownika. Należy blokować sekwencje typu `..`, ścieżki bezwzględne i dowolne próby wyjścia poza katalog właściciela.
+Ścieżka pochodząca z przeglądarki nigdy nie jest zaufana. Backend:
 
-Pliki nie mogą być udostępniane bezpośrednio z katalogu publicznego serwera. Pobieranie i podgląd przechodzą przez API, które weryfikuje właściciela.
+1. zamienia ją na value object `RelativePath`, który odrzuca segmenty `..`, `.`, puste segmenty, separatory i znaki NUL;
+2. wyznacza katalog główny na podstawie `userId` z tokenu;
+3. weryfikuje przez `realpath`, że wynikowa ścieżka fizyczna nadal znajduje się w katalogu właściciela (blokuje też wyjście przez dowiązania symboliczne).
 
-## Funkcje pierwszej wersji
+Pliki nie są udostępniane bezpośrednio z katalogu publicznego — pobieranie przechodzi przez API, które sprawdza właściciela.
+
+## Funkcje
 
 ### Użytkownik
 
 - logowanie i wylogowanie;
-- widok pulpitu/mój dysk;
-- lista plików i folderów;
-- wejście do folderu oraz powrót do katalogu nadrzędnego;
+- widok „Mój dysk”;
+- lista plików i folderów z rozmiarem i datą modyfikacji;
+- wejście do folderu oraz powrót przez breadcrumb;
 - tworzenie folderu;
-- wysyłanie pliku;
+- wysyłanie pliku (z limitem rozmiaru);
 - pobieranie pliku;
-- usuwanie pliku i pustego folderu;
-- podstawowy podgląd obrazów, PDF i plików tekstowych — opcjonalnie po wersji pierwszej.
+- usuwanie pliku i pustego folderu.
 
 ### Administrator
 
-- lista kont;
-- tworzenie zwykłego użytkownika;
-- tworzenie nowego administratora zgodnie z regułą jednego aktywnego administratora;
-- później: ręczne włączanie/wyłączanie kont i reset haseł.
+- lista kont (login, rola, status);
+- tworzenie konta użytkownika lub administratora zgodnie z regułą jednego aktywnego administratora.
 
-## Proponowany model danych
+## Model danych
 
-Tabela `users` powinna zawierać co najmniej:
+Tabela `users` (`database/schema.sql`):
 
 ```text
 id
-name / username
-email (opcjonalnie)
-password
+username (unique, 3–40 znaków)
+password_hash
 role: user | admin
-is_enabled: boolean
+enabled: boolean
 created_at
 updated_at
 ```
 
-Tabela metadanych plików jest zalecana, choć na początku można odczytywać strukturę z dysku:
+Struktura plików odczytywana jest wprost z dysku — tabela metadanych nie jest wymagana.
+
+## API v1
+
+Koperta odpowiedzi: `{ success, message, data, timestamp }`; błędy dodatkowo `errors` (mapa `pole → komunikat`).
 
 ```text
-id
-user_id
-parent_path
-stored_name
-original_name
-mime_type
-size_bytes
-created_at
-updated_at
+POST   /api/v1/auth/login.php      { username, password } -> { token, user }
+POST   /api/v1/auth/refresh.php    -> { token }
+GET    /api/v1/auth/me.php         -> { id, username, role, enabled }
+
+GET    /api/v1/files/index.php     ?path=…  -> { path, items[] }
+POST   /api/v1/files/folder.php    { path, name }
+POST   /api/v1/files/upload.php    multipart: path, file
+POST   /api/v1/files/delete.php    { path }
+GET    /api/v1/files/download.php  ?path=…  (strumień binarny)
+
+GET    /api/v1/users/index.php     admin
+POST   /api/v1/users/create.php    admin: { username, password, role }
 ```
 
-## Szkic API Laravel
+Wszystkie endpointy poza `auth/login.php` i `auth/refresh.php` wymagają nagłówka `Authorization: Bearer <token>`. Endpointy `/api/v1/users/*` dodatkowo wymagają roli `admin` (weryfikowanej po stronie backendu).
 
-Wszystkie adresy poza logowaniem wymagają zalogowanego użytkownika.
+## Frontend — interfejs
 
 ```text
-POST   /api/login
-POST   /api/logout
-GET    /api/me
-
-GET    /api/files?path={relativePath}
-POST   /api/folders
-POST   /api/files/upload
-GET    /api/files/download?path={relativePath}
-DELETE /api/files
-
-GET    /api/admin/users
-POST   /api/admin/users
+frontend/src/app/
+├── core/                 # api-config, api.service, api-error, models, auth.service,
+│                         # files.service, users.service, guards, http.interceptor
+├── features/
+│   ├── auth/login
+│   ├── desktop           # menedżer plików
+│   └── admin             # layout + użytkownicy
+└── shared/format.ts      # formatowanie rozmiaru i daty
 ```
 
-Endpointy `/api/admin/*` wymagają roli `admin`. Walidację roli należy wykonywać po stronie Laravel, niezależnie od tego, co pokaże Angular.
+- `api.service.ts` odpakowuje kopertę API i zwraca samo `data`.
+- `http.interceptor.ts` dokleja nagłówek Bearer, a przy `401` odświeża token i powtarza żądanie; błędy normalizuje do `ApiError`.
+- `guards.ts` — `authGuard` (zalogowani) i `adminGuard` (tylko administrator).
+- Trasy ładowane leniwie (`loadComponent`).
 
-## Angular — interfejs
-
-W Angularze warto podzielić aplikację na:
-
-```text
-core/
-  auth.service.ts
-  api.service.ts
-  auth.guard.ts
-features/
-  login/
-  desktop/
-  file-manager/
-  admin-users/
-shared/
-  models/
-  components/
-```
-
-Widok pulpitu ma być prosty: pasek z nazwą konta i wylogowaniem, pasek bieżącej ścieżki, akcje plikowe i siatka ikon. Frontend nie implementuje dostępu do systemu operacyjnego — jedynie komunikuje się z API Laravel.
+Frontend nie implementuje dostępu do systemu plików — wyłącznie komunikuje się z API.
 
 ## Zasady bezpieczeństwa
 
 - HTTPS w środowisku produkcyjnym.
-- Hasła wyłącznie przez `Hash::make`; nigdy w formie jawnej.
-- Autoryzacja każdego działania na plikach po stronie backendu.
-- Prywatny dysk Laravel, poza `public/`.
-- Limity rozmiaru wysyłanych plików.
-- Lista dozwolonych typów plików albo skanowanie antywirusowe przed udostępnieniem.
-- Ochrona CSRF, jeśli używane są sesje/cookies; właściwie skonfigurowane CORS dla aplikacji Angular.
-- Rejestrowanie ważnych działań administratora.
-- Testy reguły: „nowy admin wyłącza poprzedniego”.
+- Hasła wyłącznie przez `password_hash` / `password_verify`.
+- Autoryzacja każdego działania na plikach po stronie backendu (właściciel z tokenu).
+- Katalog prywatny użytkowników poza webrootem.
+- Limit rozmiaru wysyłanych plików (`SMARTDESK_MAX_UPLOAD_BYTES`).
+- CORS kontrolowany zmienną `API_ALLOWED_ORIGINS`.
+- `API_SECRET` utrzymywany wyłącznie w `.env` na serwerze (nie w repozytorium).
+- Testy reguły „nowy admin wyłącza poprzedniego administratora”.
 
-## Stan roboczy
+## Stan wdrożenia
 
-W katalogu głównym istnieje wcześniejszy prototyp w czystym PHP (`index.php` i `public/`). Nie należy go traktować jako docelowej architektury. Docelowa implementacja ma powstawać w `laravel-api/` i `angular-web/`.
-
-Konfiguracja lokalnego PHP została uzupełniona o zaufany certyfikat Avast Web Shield, ponieważ program antywirusowy skanuje ruch HTTPS. Composer działa już z bezpieczną weryfikacją certyfikatów. Nie należy wyłączać weryfikacji TLS ani używać opcji omijających HTTPS.
+- Repozytorium: GitHub Actions — CI (`Angular build`, `PHP tests`) oraz deploy na FTP (`lftp mirror`).
+- Produkcja: `https://smartdesk.rogut.net/` — webroot `public_html` (API + Angular), kod aplikacji w katalogu projektu.
+- `.env` nie jest wgrywany; wymaga jednorazowego utworzenia na serwerze (dane bazy oraz `API_SECRET`) i praw zapisu dla `storage/users`.

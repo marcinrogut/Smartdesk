@@ -4,7 +4,6 @@ on:
   pull_request:
     branches:
       - main
-      - master
     types:
       - opened
       - synchronize
@@ -12,7 +11,6 @@ on:
   push:
     branches:
       - main
-      - master
 
 permissions:
   contents: read
@@ -23,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: angular-web
+        working-directory: frontend
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -33,7 +31,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: angular-web/package-lock.json
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
         run: npm ci
@@ -41,12 +39,9 @@ jobs:
       - name: Build
         run: npm run build
 
-  laravel:
-    name: Laravel tests
+  php:
+    name: PHP tests
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: laravel-api
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -55,25 +50,36 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.4'
-          extensions: mbstring, dom, fileinfo, json, libxml, sqlite3, pdo_sqlite, zip, curl
+          extensions: mbstring, dom, fileinfo, json, libxml, zip, curl, pdo, pdo_mysql
           tools: composer
           coverage: none
 
       - name: Cache Composer dependencies
         uses: actions/cache@v4
         with:
-          path: laravel-api/vendor
-          key: ${{ runner.os }}-composer-${{ hashFiles('laravel-api/composer.lock') }}
+          path: vendor
+          key: ${{ runner.os }}-composer-${{ hashFiles('composer.lock') }}
           restore-keys: |
             ${{ runner.os }}-composer-
 
       - name: Install dependencies
         run: composer install --no-progress --prefer-dist --optimize-autoloader
 
-      - name: Prepare environment
-        run: |
-          cp .env.example .env
-          php artisan key:generate
+      - name: Validate composer.json
+        run: composer validate --no-check-publish
+
+      - name: Lint PHP sources
+        run: composer lint
+
+      - name: Static analysis (PHPStan)
+        run: composer phpstan
+        continue-on-error: true
+
+      - name: Coding standard (PHPCS)
+        run: composer phpcs
+        continue-on-error: true
 
       - name: Run tests
-        run: php artisan test
+        run: composer test
+        env:
+          API_SECRET: test-secret-0123456789

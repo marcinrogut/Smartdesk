@@ -1,0 +1,10 @@
+parameters:
+  level: max
+  paths:
+    - src/
+
+  excludePaths:
+    - %rootDir%/../vendor
+    - %rootDir%/tests
+
+  tmpDir: .phpstan.cache

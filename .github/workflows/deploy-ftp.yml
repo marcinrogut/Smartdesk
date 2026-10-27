@@ -13,9 +13,6 @@ jobs:
   test:
     name: Tests
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: laravel-api
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -24,20 +21,28 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.4'
-          extensions: mbstring, dom, fileinfo, json, libxml, sqlite3, pdo_sqlite, zip, curl
+          extensions: mbstring, dom, fileinfo, json, libxml, zip, curl, pdo, pdo_mysql
           tools: composer
           coverage: none
+
+      - name: Cache Composer dependencies
+        uses: actions/cache@v4
+        with:
+          path: vendor
+          key: ${{ runner.os }}-composer-${{ hashFiles('composer.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-composer-
 
       - name: Install dependencies
         run: composer install --no-progress --prefer-dist --optimize-autoloader
 
-      - name: Prepare environment
-        run: |
-          cp .env.example .env
-          php artisan key:generate
+      - name: Lint PHP sources
+        run: composer lint
 
       - name: Run tests
-        run: php artisan test
+        run: composer test
+        env:
+          API_SECRET: test-secret-0123456789
 
   deploy:
     name: Deploy to FTP
@@ -51,39 +56,51 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Setup PHP 8.4
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: mbstring, dom, fileinfo, json, libxml, zip, curl, pdo, pdo_mysql
+          tools: composer
+          coverage: none
+
+      - name: Cache Composer dependencies
+        uses: actions/cache@v4
+        with:
+          path: vendor
+          key: ${{ runner.os }}-composer-${{ hashFiles('composer.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-composer-
+
+      - name: Install production PHP dependencies
+        run: composer install --no-dev --no-progress --prefer-dist --optimize-autoloader
+
       - name: Use Node.js 22
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: angular-web/package-lock.json
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
 
       - name: Build Angular app
-        working-directory: angular-web
+        working-directory: frontend
+        run: npm run build
+
+      # Zawartość public/ (API + zbudowany Angular) trafia do webroota.
+      - name: Stage Angular build into webroot
         run: |
-          npm ci
-          npm run build -- --base-href=/app/
-
-      - name: Setup PHP 8.4
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: '8.4'
-          extensions: mbstring, dom, fileinfo, json, libxml, sqlite3, pdo_sqlite, zip, curl
-          tools: composer
-          coverage: none
-
-      - name: Install production PHP dependencies
-        working-directory: laravel-api
-        run: composer install --no-dev --no-progress --prefer-dist --optimize-autoloader
+          cp -R frontend/dist/angular/. public/
+          echo "📦 Pliki Angulara zastage'owane w public/ (webroot):"
+          ls -1 public
 
       - name: Install lftp
         run: sudo apt-get update && sudo apt-get install -y lftp
 
-      # Zawartość laravel-api/public -> docroot subdomeny (public_html).
-      # MUSI być przed deployem Angulara: --delete czyści webroot (usuwając stary /app),
-      # a kolejny krok odtworzy podkatalog /app.
-      # Uwaga: --delete usuwa wszystko w public_html, czego nie ma w laravel-api/public.
-      - name: Deploy Laravel public to webroot
+      - name: Deploy public/ to webroot
         env:
           FTP_SERVER: ${{ secrets.FTP_SERVER }}
           FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
@@ -91,40 +108,17 @@ jobs:
           FTP_DEPLOY_PATH: ${{ vars.FTP_DEPLOY_PATH }}
         run: |
           lftp -u "$FTP_USERNAME","$FTP_PASSWORD" "$FTP_SERVER" -e "
-            set ftp:ssl-force true;
-            set ftp:ssl-protect-data true;
-            set ssl:verify-certificate false;
+            set ftp:ssl-allow no;
+            set ftp:passive-mode yes;
             mkdir -p $FTP_DEPLOY_PATH;
-            lcd laravel-api/public;
+            lcd public;
             cd $FTP_DEPLOY_PATH;
-            mirror -R --delete --verbose . .;
+            mirror -R --delete --verbose --no-empty-dirs . .;
             bye
           "
 
-      # Zbudowany Angular (SPA) -> podkatalog /app w webroocie (base-href=/app/).
-      # Zakres ograniczony do public_html/app, więc --delete nie rusza plików Laravela w webroocie.
-      - name: Deploy Angular SPA to /app
-        env:
-          FTP_SERVER: ${{ secrets.FTP_SERVER }}
-          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
-          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
-          FTP_DEPLOY_PATH: ${{ vars.FTP_DEPLOY_PATH }}
-        run: |
-          lftp -u "$FTP_USERNAME","$FTP_PASSWORD" "$FTP_SERVER" -e "
-            set ftp:ssl-force true;
-            set ftp:ssl-protect-data true;
-            set ssl:verify-certificate false;
-            mkdir -p $FTP_DEPLOY_PATH/app;
-            lcd angular-web/dist/angular-web/browser;
-            cd $FTP_DEPLOY_PATH/app;
-            mirror -R --delete --verbose . .;
-            bye
-          "
-
-      # Backend Laravela -> katalog projektu (rodzeństwo webroota, poza public_html).
-      # public/ nie jest tu wysyłane: jego zawartość trafia do FTP_DEPLOY_PATH.
-      # uwaga: katalog lokalny to laravel-api/, stąd lcd.
-      - name: Deploy Laravel backend to project root
+      # Kod aplikacji (poza public/) -> katalog projektu, poza public_html.
+      - name: Deploy backend dirs to project root
         env:
           FTP_SERVER: ${{ secrets.FTP_SERVER }}
           FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
@@ -132,25 +126,56 @@ jobs:
           FTP_PROJECT_ROOT: ${{ vars.FTP_PROJECT_ROOT }}
         run: |
           lftp -u "$FTP_USERNAME","$FTP_PASSWORD" "$FTP_SERVER" -e "
-            set ftp:ssl-force true;
-            set ftp:ssl-protect-data true;
-            set ssl:verify-certificate false;
+            set ftp:ssl-allow no;
+            set ftp:passive-mode yes;
             mkdir -p $FTP_PROJECT_ROOT;
             cd $FTP_PROJECT_ROOT;
-            lcd laravel-api;
-            mirror -R --delete --verbose --no-empty-dirs app app;
-            mirror -R --delete --verbose --no-empty-dirs bootstrap bootstrap;
-            mirror -R --delete --verbose --no-empty-dirs config config;
-            mirror -R --delete --verbose --no-empty-dirs database database;
-            mirror -R --delete --verbose --no-empty-dirs resources resources;
-            mirror -R --delete --verbose --no-empty-dirs routes routes;
-            mirror -R --delete --verbose --no-empty-dirs storage storage;
-            mirror -R --delete --verbose --no-empty-dirs vendor vendor;
+            mirror -R --verbose --no-empty-dirs src src;
+            mirror -R --verbose --no-empty-dirs config config;
+            mirror -R --verbose --no-empty-dirs database database;
+            mirror -R --verbose --no-empty-dirs storage storage;
+            mirror -R --verbose --no-empty-dirs vendor vendor;
             put composer.json;
             put composer.lock;
-            put artisan;
             bye
           "
+
+      - name: Ensure API_SECRET in production .env
+        env:
+          FTP_SERVER: ${{ secrets.FTP_SERVER }}
+          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+          FTP_PROJECT_ROOT: ${{ vars.FTP_PROJECT_ROOT }}
+          API_SECRET: ${{ secrets.API_SECRET }}
+        run: |
+          if [ -z "$API_SECRET" ]; then
+            echo "::error::GitHub secret API_SECRET is not set"
+            exit 1
+          fi
+          lftp -u "$FTP_USERNAME","$FTP_PASSWORD" "$FTP_SERVER" -e "
+            set ftp:ssl-allow no;
+            set ftp:passive-mode yes;
+            cd $FTP_PROJECT_ROOT;
+            get .env -o .env.remote;
+            bye
+          "
+          if [ ! -f .env.remote ]; then
+            echo "::error::Remote .env not found at $FTP_PROJECT_ROOT — utwórz go ręcznie na serwerze"
+            exit 1
+          fi
+          if grep -q '^API_SECRET=' .env.remote; then
+            echo "✅ API_SECRET już jest w zdalnym .env — nic nie zmieniam"
+          else
+            printf '\nAPI_SECRET=%s\n' "$API_SECRET" >> .env.remote
+            lftp -u "$FTP_USERNAME","$FTP_PASSWORD" "$FTP_SERVER" -e "
+              set ftp:ssl-allow no;
+              set ftp:passive-mode yes;
+              cd $FTP_PROJECT_ROOT;
+              put .env.remote -o .env;
+              bye
+            "
+            echo "✅ API_SECRET dopisany do zdalnego .env"
+          fi
 
       - name: Deployment summary
         if: always()
@@ -159,3 +184,5 @@ jobs:
           echo "- Branch: \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Commit: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Author: @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Webroot: \`${{ vars.FTP_DEPLOY_PATH }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Website: https://smartdesk.rogut.net/" >> $GITHUB_STEP_SUMMARY
