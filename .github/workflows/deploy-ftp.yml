@@ -62,7 +62,7 @@ jobs:
         working-directory: angular-web
         run: |
           npm ci
-          npm run build
+          npm run build -- --base-href=/app/
 
       - name: Setup PHP 8.4
         uses: shivammathur/setup-php@v2
@@ -79,10 +79,11 @@ jobs:
       - name: Install lftp
         run: sudo apt-get update && sudo apt-get install -y lftp
 
-      # Angular (SPA) -> webroot.
-      # Uwaga: --delete usuwa zdalne pliki nieobecne w buildzie. Ustaw FTP_DEPLOY_PATH
-      # na katalog, który należy w całości do frontendu.
-      - name: Deploy Angular build to webroot
+      # Zawartość laravel-api/public -> docroot subdomeny (public_html).
+      # MUSI być przed deployem Angulara: --delete czyści webroot (usuwając stary /app),
+      # a kolejny krok odtworzy podkatalog /app.
+      # Uwaga: --delete usuwa wszystko w public_html, czego nie ma w laravel-api/public.
+      - name: Deploy Laravel public to webroot
         env:
           FTP_SERVER: ${{ secrets.FTP_SERVER }}
           FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
@@ -96,13 +97,36 @@ jobs:
             set net:socket-bind-ipv4 true;
             set ftp:use-ipv6 false;
             mkdir -p $FTP_DEPLOY_PATH;
-            lcd angular-web/dist/angular-web/browser;
+            lcd laravel-api/public;
             cd $FTP_DEPLOY_PATH;
             mirror -R --delete --verbose . .;
             bye
           "
 
-      # Backend Laravela -> katalog projektu (rodzeństwo webroota).
+      # Zbudowany Angular (SPA) -> podkatalog /app w webroocie (base-href=/app/).
+      # Zakres ograniczony do public_html/app, więc --delete nie rusza plików Laravela w webroocie.
+      - name: Deploy Angular SPA to /app
+        env:
+          FTP_SERVER: ${{ secrets.FTP_SERVER }}
+          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+          FTP_DEPLOY_PATH: ${{ vars.FTP_DEPLOY_PATH }}
+        run: |
+          lftp -u "$FTP_USERNAME","$FTP_PASSWORD" "$FTP_SERVER" -e "
+            set ftp:ssl-force true;
+            set ftp:ssl-protect-data true;
+            set ssl:verify-certificate false;
+            set net:socket-bind-ipv4 true;
+            set ftp:use-ipv6 false;
+            mkdir -p $FTP_DEPLOY_PATH/app;
+            lcd angular-web/dist/angular-web/browser;
+            cd $FTP_DEPLOY_PATH/app;
+            mirror -R --delete --verbose . .;
+            bye
+          "
+
+      # Backend Laravela -> katalog projektu (rodzeństwo webroota, poza public_html).
+      # public/ nie jest tu wysyłane: jego zawartość trafia do FTP_DEPLOY_PATH.
       - name: Deploy Laravel backend to project root
         env:
           FTP_SERVER: ${{ secrets.FTP_SERVER }}
@@ -122,7 +146,6 @@ jobs:
             mirror -R --delete --verbose --no-empty-dirs bootstrap bootstrap;
             mirror -R --delete --verbose --no-empty-dirs config config;
             mirror -R --delete --verbose --no-empty-dirs database database;
-            mirror -R --delete --verbose --no-empty-dirs public public;
             mirror -R --delete --verbose --no-empty-dirs resources resources;
             mirror -R --delete --verbose --no-empty-dirs routes routes;
             mirror -R --delete --verbose --no-empty-dirs storage storage;
