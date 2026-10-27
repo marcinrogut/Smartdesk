@@ -26,5 +26,5 @@ try {
     ApiResponse::success($handler->handle(), 'Lista użytkowników.');
 } catch (Throwable $exception) {
     error_log('List users error: ' . $exception->getMessage());
-    ApiResponse::error('Błąd serwera.', 500);
+    ApiResponse::serverError($exception);
 }

@@ -46,5 +46,5 @@ try {
     }
 
     error_log('Download error: ' . $exception->getMessage());
-    ApiResponse::error('Błąd serwera.', 500);
+    ApiResponse::serverError($exception);
 }

@@ -47,5 +47,5 @@ try {
     }
 
     error_log('Delete error: ' . $exception->getMessage());
-    ApiResponse::error('Błąd serwera.', 500);
+    ApiResponse::serverError($exception);
 }

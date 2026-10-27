@@ -53,5 +53,5 @@ try {
     ApiResponse::error('Nieprawidłowy login lub hasło.', 401);
 } catch (Throwable $exception) {
     error_log('Login error: ' . $exception->getMessage());
-    ApiResponse::error('Błąd serwera.', 500);
+    ApiResponse::serverError($exception);
 }

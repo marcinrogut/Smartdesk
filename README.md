@@ -42,13 +42,13 @@ SmartDesk/
 
    Uzupełnij `API_SECRET` (długi, losowy ciąg) oraz dane bazy `SMARTDESK_DB_*`. Tabela `users` tworzy się automatycznie przy pierwszym żądaniu HTTP; ręcznie można użyć `database/schema.sql`.
 
-3. Backend (API) na porcie 8000:
+3. Backend (API) na porcie 8001:
 
    ```powershell
-   php -S localhost:8000 -t public
+   php -S localhost:8001 -t public
    ```
 
-   Domyślne konto administracyjne tworzone przy pierwszym starcie: **admin / admin**.
+   Dopóki w bazie nie ma żadnego konta administratora, działa wbudowane konto **admin / admin**. Jest wirtualne — nie trafia do tabeli `users` i nie pojawia się na liście użytkowników. Utworzenie pierwszego konta z rolą `admin` trwale je unieważnia.
 
 4. Frontend:
 
@@ -58,9 +58,22 @@ SmartDesk/
    npm start
    ```
 
-   Aplikacja działa na `http://localhost:4200`, a żądania `/api/**` są proxowane do `http://localhost:8000` (plik `frontend/proxy.conf.json`).
+   Aplikacja działa na `http://localhost:4201`, a żądania `/api/**` są proxowane do `http://localhost:8001` (plik `frontend/proxy.conf.json`).
 
 Utworzenie nowego konta z rolą administratora automatycznie wyłącza poprzednie konto admin (w systemie może istnieć tylko jeden aktywny administrator; stan konta jest sprawdzany przy każdym żądaniu, więc tokeny poprzedniego admina natychmiast tracą ważność).
+
+## Profile środowisk (dev / prod)
+
+Rozdział środowisk działa na priorytecie plików env — `src/bootstrap.php` ładuje najpierw **`.env.local`**, a gdy go nie ma — **`.env`**. Dzięki temu lokalnie wystarczy trzymać `.env.local` (ignorowany przez git), który nadpisuje produkcyjne dane z `.env`.
+
+| Profil | Plik | Baza danych | `APP_ENV` |
+|--------|------|-------------|-----------|
+| Deweloperski | `.env.local` | `192.168.1.80` / `Smartdesk` | `development` |
+| Produkcyjny | `.env` | `localhost` / `srv113891_smartdesk_db` | `production` |
+
+`APP_ENV` nie wybiera bazy (o tym decyduje plik env) — steruje tylko ujawnianiem szczegółów błędów HTTP 500 (`ApiResponse::serverError()`).
+
+Plik `.env` na serwerze jest utrzymywany ręcznie; w repozytorium są tylko `.env.example` (szablon) oraz `deploy-config.sh` (generator `.env` wg `APP_ENV`, hasło produkcyjne przekazywane przez `SMARTDESK_DB_PASS`).
 
 ## Jakość kodu i testy
 

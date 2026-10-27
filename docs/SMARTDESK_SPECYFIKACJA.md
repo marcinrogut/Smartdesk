@@ -50,14 +50,14 @@ W systemie może być tylko **jeden aktywny administrator**. Przy tworzeniu nowe
 3. stan konta (`enabled`) jest sprawdzany przy każdym żądaniu, więc tokeny poprzedniego administratora natychmiast tracą ważność;
 4. nowy administrator pozostaje jedynym aktywnym kontem administracyjnym.
 
-Domyślne dane dla lokalnego środowiska demonstracyjnego:
+Wbudowane konto dostępne dopóki w bazie nie ma żadnego konta z rolą `admin`:
 
 ```text
 login: admin
 hasło: admin
 ```
 
-Konto zakładane automatycznie tylko wtedy, gdy w bazie nie ma żadnego użytkownika. W wersji produkcyjnej należy zmienić hasło zaraz po pierwszym logowaniu.
+Konto jest **wirtualne** — nie istnieje w tabeli `users`, nie pojawia się na liście użytkowników i nie można go edytować ani usunąć. Utworzenie pierwszego konta z rolą `admin` trwale je unieważnia (również wydany wcześniej token natychmiast przestaje działać).
 
 ## Dane i katalogi użytkowników
 

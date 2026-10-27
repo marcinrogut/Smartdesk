@@ -51,5 +51,5 @@ try {
     ApiResponse::error($exception->getMessage(), 422, $exception->errors);
 } catch (Throwable $exception) {
     error_log('Upload error: ' . $exception->getMessage());
-    ApiResponse::error('Błąd serwera.', 500);
+    ApiResponse::serverError($exception);
 }

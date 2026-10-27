@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace SmartDesk\Api;
 
+use Throwable;
+
 /** Wspólna koperta odpowiedzi API v1. */
 final class ApiResponse
 {
@@ -40,5 +42,18 @@ final class ApiResponse
         }
 
         echo json_encode($response, JSON_UNESCAPED_UNICODE);
+    }
+
+    /**
+     * Odpowiedź 500 dla nieobsłużonego wyjątku. Treść wyjątku trafia do
+     * odpowiedzi tylko przy APP_ENV=development, na produkcji zostaje w logach.
+     */
+    public static function serverError(Throwable $exception): void
+    {
+        $message = Environment::isDevelopment()
+            ? 'Błąd serwera: ' . $exception->getMessage()
+            : 'Błąd serwera.';
+
+        self::error($message, 500);
     }
 }

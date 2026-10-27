@@ -5,7 +5,7 @@
  *
  * Ładowany automatycznie przez Composer (autoload.files) oraz jawnie przez
  * cienkie endpointy w public/api/v1/. Odpowiada za: autoloader, zmienne
- * środowiskowe oraz automatyczną migrację schematu i konto domyślnego admina.
+ * środowiskowe oraz automatyczną migrację schematu.
  */
 
 declare(strict_types=1);
@@ -53,13 +53,12 @@ foreach (['/.env.local', '/.env'] as $envSuffix) {
     break;
 }
 
-// Automatyczna migracja schematu oraz konto domyślnego administratora.
-// Wykonywane wyłącznie w kontekście HTTP (nie w CLI/testach).
+// Automatyczna migracja schematu. Wykonywana wyłącznie w kontekście HTTP
+// (nie w CLI/testach). Konta nie zakładamy - dopóki w bazie nie ma
+// administratora, działa wbudowane konto admin/admin.
 if (PHP_SAPI !== 'cli') {
     try {
-        $initializer = new DatabaseInitializer(DatabaseConnection::connect());
-        $initializer->migrate();
-        $initializer->ensureDefaultAdmin();
+        (new DatabaseInitializer(DatabaseConnection::connect()))->migrate();
     } catch (Throwable) {
         // Brak bazy podczas pierwszego uruchomienia nie może wywalić całej aplikacji.
     }

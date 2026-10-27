@@ -5,12 +5,14 @@ declare(strict_types=1);
 namespace SmartDesk\Infrastructure\Persistence;
 
 use PDO;
-use SmartDesk\Domain\ValueObject\UserRole;
 use Throwable;
 
 /**
- * Automatyczne przygotowanie schematu i konta domyślnego administratora.
+ * Automatyczne przygotowanie schematu bazy danych.
  * Uruchamiane z bootstrap.php przy pierwszym żądaniu HTTP.
+ *
+ * Nie zakłada żadnego konta - dopóki w bazie nie ma administratora, dostęp
+ * zapewnia wbudowane konto z PdoUserRepository.
  */
 final class DatabaseInitializer
 {
@@ -35,21 +37,5 @@ final class DatabaseInitializer
         }
 
         $this->pdo->exec((string) file_get_contents($schemaFile));
-    }
-
-    /** Zakłada konto admin/admin, jeżeli w bazie nie ma jeszcze żadnego użytkownika. */
-    public function ensureDefaultAdmin(): void
-    {
-        $statement = $this->pdo->query('SELECT COUNT(*) FROM users');
-        if ($statement === false) {
-            return;
-        }
-
-        $count = $statement->fetchColumn();
-        if (is_numeric($count) && (int) $count > 0) {
-            return;
-        }
-
-        (new PdoUserRepository($this->pdo))->create('admin', 'admin', UserRole::Admin, true);
     }
 }

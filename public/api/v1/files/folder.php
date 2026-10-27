@@ -38,5 +38,5 @@ try {
     ApiResponse::error($exception->getMessage(), 422, $exception->errors);
 } catch (Throwable $exception) {
     error_log('Create folder error: ' . $exception->getMessage());
-    ApiResponse::error('Błąd serwera.', 500);
+    ApiResponse::serverError($exception);
 }

@@ -35,5 +35,5 @@ try {
     }
 
     error_log('List files error: ' . $exception->getMessage());
-    ApiResponse::error('Błąd serwera.', 500);
+    ApiResponse::serverError($exception);
 }
