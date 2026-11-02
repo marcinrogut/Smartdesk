@@ -2,3 +2,14 @@
   display: block;
   min-height: 100dvh;
 }
+
+/* Pulpit zajmuje cały ekran — bez marginesów i przewijania strony. */
+:host:has(.container.is-desktop) {
+  min-height: 0;
+}
+
+.container.is-desktop {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}

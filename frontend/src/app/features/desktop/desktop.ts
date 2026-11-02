@@ -1,328 +1,391 @@
-import { Component, OnInit, computed, inject, signal } from '@angular/core';
-import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
-import { concatMap, from } from 'rxjs';
-import { FilesService } from '../../core/files.service';
-import { FileEntry } from '../../core/models';
-import { ApiError, fieldError, toApiError } from '../../core/api-error';
-import { formatBytes, formatDate } from '../../shared/format';
+import { Component, computed, inject, signal } from '@angular/core';
+import { Router } from '@angular/router';
+import { AuthService } from '../../core/auth.service';
+import { DesktopWindowComponent } from './desktop-window';
+import { MyComputerComponent } from './my-computer';
 
-/** Zarządza plikami i folderami zalogowanego użytkownika. */
+/** Opóźnienie zwijania menu po zjechaniu kursorem (ms). */
+const MENU_HIDE_DELAY = 350;
+
+/**
+ * Pulpit użytkownika: tapeta na całym ekranie, wysuwane menu przy górnej
+ * krawędzi (z ikoną zalogowanego użytkownika i wylogowaniem) oraz ikona
+ * „Mój komputer" otwierająca okno z dyskiem.
+ */
 @Component({
   selector: 'app-desktop',
-  imports: [ReactiveFormsModule],
+  imports: [DesktopWindowComponent, MyComputerComponent],
   template: `
-    <section class="hero">
-      <h1 class="hero-brand">🗂️ Mój dysk</h1>
-      <p class="hero-lead">Foldery i pliki w Twojej prywatnej przestrzeni</p>
-    </section>
+    <div class="desktop" (click)="closeUserMenu()">
+      <div class="desktop-wall" aria-hidden="true"></div>
 
-    <section class="panel">
-      @if (error(); as message) {
-        <div class="alert alert-error" role="alert">{{ message }}</div>
-      }
-      @if (notice(); as message) {
-        <div class="alert alert-success" role="status">{{ message }}</div>
-      }
+      <div class="desktop-edge" (mouseenter)="revealMenu()" (click)="toggleMenu()"></div>
 
-      <nav class="breadcrumb" aria-label="Ścieżka">
-        <button type="button" (click)="open('')">🏠 Start</button>
-        @for (crumb of crumbs(); track crumb.path) {
-          <span class="crumb-sep" aria-hidden="true">/</span>
-          <button type="button" (click)="open(crumb.path)">{{ crumb.name }}</button>
-        }
-      </nav>
+      <header
+        class="desktop-menu"
+        [class.is-open]="menuOpen()"
+        (mouseenter)="revealMenu()"
+        (mouseleave)="scheduleHideMenu()"
+      >
+        <div class="desktop-user" [class.is-open]="userMenuOpen()">
+          <button
+            type="button"
+            class="desktop-user-trigger"
+            aria-haspopup="true"
+            [attr.aria-expanded]="userMenuOpen()"
+            (click)="toggleUserMenu($event)"
+          >
+            @if (me(); as user) {
+              <img class="desktop-avatar" [src]="avatarUrl(user.username)" [alt]="user.username" />
+              <span class="desktop-user-name">{{ user.username }}</span>
+            } @else {
+              <span class="desktop-user-name">Konto</span>
+            }
+            <span class="desktop-caret" aria-hidden="true">▾</span>
+          </button>
 
-      <div class="toolbar">
-        <button type="button" class="btn-secondary btn-inline" (click)="toggleFolderForm()">
-          {{ folderFormOpen() ? '✕ Anuluj' : '+ Nowy folder' }}
-        </button>
+          @if (userMenuOpen()) {
+            <div class="desktop-user-menu" role="menu">
+              <p class="desktop-user-menu-name">{{ me()?.username }}</p>
+              <p class="desktop-user-menu-role">{{ roleLabel() }}</p>
+              <hr />
+              <button type="button" class="desktop-user-menu-item" role="menuitem" (click)="logout()">
+                🚪 Wyloguj
+              </button>
+            </div>
+          }
+        </div>
+      </header>
 
-        <label class="btn-secondary btn-inline">
-          {{ uploading() ? '⬆️ Wgrywanie…' : '⬆️ Wgraj pliki' }}
-          <input type="file" multiple class="visually-hidden" [disabled]="uploading()" (change)="onFilesSelected($event)" />
-        </label>
-
-        <span class="spacer"></span>
-
-        <button type="button" class="btn-secondary btn-inline" [disabled]="loading()" (click)="reload()">
-          🔄 Odśwież
+      <div class="desktop-icons">
+        <button
+          type="button"
+          class="desktop-icon"
+          [class.is-active]="computerOpen() && !computerMinimized()"
+          (click)="openComputer()"
+        >
+          <span class="desktop-icon-art" aria-hidden="true">🖥️</span>
+          <span class="desktop-icon-label">Mój komputer</span>
         </button>
       </div>
 
-      @if (folderFormOpen()) {
-        <form [formGroup]="folderForm" (ngSubmit)="createFolder()" style="margin-bottom: 1.25rem;">
-          <div class="toolbar" style="align-items: flex-end; margin: 0;">
-            <div class="form-group" style="flex: 1; min-width: 200px; margin: 0;">
-              <label class="field-label" for="folder-name">Nazwa folderu</label>
-              <input id="folder-name" type="text" formControlName="name" autocomplete="off" placeholder="np. Faktury 2026" />
-              @if (folderFieldError(); as message) {
-                <p class="hint" style="color: var(--danger);">{{ message }}</p>
-              }
-            </div>
-            <button type="submit" class="btn-secondary btn-inline" [disabled]="creatingFolder()">
-              {{ creatingFolder() ? 'Tworzenie…' : 'Utwórz folder' }}
-            </button>
-          </div>
-        </form>
+      @if (computerOpen()) {
+        <app-desktop-window
+          title="Mój komputer"
+          [minimized]="computerMinimized()"
+          (close)="closeComputer()"
+          (minimize)="minimizeComputer()"
+        >
+          <app-my-computer />
+        </app-desktop-window>
       }
 
-      @if (loading()) {
-        <p class="loading">Ładowanie zawartości…</p>
-      } @else if (items().length === 0) {
-        <p class="empty-state">Ten folder jest pusty.</p>
-      } @else {
-        <div class="table-wrap">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Nazwa</th>
-                <th style="width: 120px;">Rozmiar</th>
-                <th style="width: 190px;">Modyfikacja</th>
-                <th style="width: 200px; text-align: right;">Akcje</th>
-              </tr>
-            </thead>
-            <tbody>
-              @for (entry of items(); track entry.name) {
-                <tr>
-                  <td>
-                    @if (entry.type === 'folder') {
-                      <button type="button" class="entry-name is-folder" (click)="open(childPath(entry.name))">
-                        <span class="entry-icon" aria-hidden="true">📁</span>
-                        <span>{{ entry.name }}</span>
-                      </button>
-                    } @else {
-                      <span class="entry-name">
-                        <span class="entry-icon" aria-hidden="true">📄</span>
-                        <span>{{ entry.name }}</span>
-                      </span>
-                    }
-                  </td>
-                  <td>{{ entry.type === 'folder' ? '—' : formatSize(entry.size) }}</td>
-                  <td>{{ formatModified(entry.modified) }}</td>
-                  <td>
-                    <div class="actions-cell">
-                      @if (entry.type === 'file') {
-                        <button
-                          type="button"
-                          class="btn-secondary"
-                          [disabled]="busyPath() === childPath(entry.name)"
-                          (click)="download(entry)"
-                        >⬇️ Pobierz</button>
-                      }
-                      <button
-                        type="button"
-                        class="btn-secondary btn-danger"
-                        [disabled]="busyPath() === childPath(entry.name)"
-                        (click)="remove(entry)"
-                      >🗑 Usuń</button>
-                    </div>
-                  </td>
-                </tr>
-              }
-            </tbody>
-          </table>
-        </div>
+      @if (computerMinimized()) {
+        <button type="button" class="desktop-taskbar" (click)="openComputer()">
+          <span aria-hidden="true">🖥️</span>
+          <span>Mój komputer</span>
+        </button>
       }
-    </section>
+    </div>
+  `,
+  styles: `
+    .desktop {
+      position: fixed;
+      inset: 0;
+      overflow: hidden;
+    }
+
+    .desktop-wall {
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(ellipse 70% 55% at 12% 0%, rgba(94, 129, 255, 0.4), transparent 60%),
+        radial-gradient(ellipse 65% 50% at 92% 8%, rgba(96, 200, 220, 0.32), transparent 58%),
+        linear-gradient(165deg, #1c2749 0%, #223055 46%, #141d38 100%);
+    }
+
+    /* Cienka, lekko widoczna strefa przy górnej krawędzi — najechanie wysuwa menu. */
+    .desktop-edge {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 12px;
+      z-index: 40;
+      cursor: pointer;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0));
+    }
+
+    .desktop-edge::after {
+      content: '';
+      position: absolute;
+      top: 3px;
+      left: 50%;
+      width: 72px;
+      height: 4px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.45);
+      transform: translateX(-50%);
+    }
+
+    .desktop-menu {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 45;
+      display: flex;
+      align-items: center;
+      padding: 0.45rem 0.9rem;
+      background: rgba(14, 21, 42, 0.94);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 0 14px 32px rgba(6, 10, 24, 0.45);
+      transform: translateY(-105%);
+      transition: transform 0.22s ease;
+    }
+
+    .desktop-menu.is-open {
+      transform: translateY(0);
+    }
+
+    .desktop-user {
+      position: relative;
+    }
+
+    .desktop-user-trigger {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.55rem;
+      padding: 0.4rem 0.8rem 0.4rem 0.45rem;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.08);
+      color: #fff;
+      font: inherit;
+      font-weight: 700;
+      font-size: 0.92rem;
+      cursor: pointer;
+      transition: background 0.18s ease;
+    }
+
+    .desktop-user-trigger:hover {
+      background: rgba(255, 255, 255, 0.18);
+    }
+
+    .desktop-avatar {
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      object-fit: cover;
+      display: block;
+      border: 2px solid rgba(255, 255, 255, 0.55);
+    }
+
+    .desktop-caret {
+      font-size: 0.75rem;
+      opacity: 0.85;
+    }
+
+    .desktop-user-menu {
+      position: absolute;
+      top: calc(100% + 0.5rem);
+      left: 0;
+      min-width: 14rem;
+      padding: 0.6rem 0.5rem 0.5rem;
+      background: rgba(22, 31, 58, 0.98);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 14px;
+      box-shadow: 0 18px 40px rgba(6, 10, 24, 0.5);
+      color: #fff;
+    }
+
+    .desktop-user-menu-name {
+      margin: 0 0 0.15rem;
+      padding: 0 0.5rem;
+      font-weight: 700;
+      font-size: 0.95rem;
+    }
+
+    .desktop-user-menu-role {
+      margin: 0;
+      padding: 0 0.5rem;
+      font-size: 0.82rem;
+      color: rgba(255, 255, 255, 0.65);
+    }
+
+    .desktop-user-menu hr {
+      margin: 0.55rem 0.25rem;
+      border: 0;
+      border-top: 1px solid rgba(255, 255, 255, 0.14);
+    }
+
+    .desktop-user-menu-item {
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+      width: 100%;
+      padding: 0.55rem 0.6rem;
+      border: 0;
+      border-radius: 10px;
+      background: transparent;
+      color: #fff;
+      font: inherit;
+      font-weight: 600;
+      font-size: 0.9rem;
+      text-align: left;
+      cursor: pointer;
+      transition: background 0.18s ease;
+    }
+
+    .desktop-user-menu-item:hover {
+      background: rgba(255, 255, 255, 0.14);
+    }
+
+    .desktop-icons {
+      position: absolute;
+      top: 3.25rem;
+      left: 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+
+    .desktop-icon {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.35rem;
+      width: 96px;
+      padding: 0.7rem 0.5rem;
+      border: 1px solid transparent;
+      border-radius: 12px;
+      background: transparent;
+      color: #fff;
+      font: inherit;
+      cursor: pointer;
+      transition: background 0.18s ease, border-color 0.18s ease;
+    }
+
+    .desktop-icon:hover,
+    .desktop-icon:focus-visible {
+      background: rgba(255, 255, 255, 0.16);
+      border-color: rgba(255, 255, 255, 0.28);
+      outline: none;
+    }
+
+    .desktop-icon.is-active {
+      background: rgba(255, 255, 255, 0.22);
+      border-color: rgba(255, 255, 255, 0.4);
+    }
+
+    .desktop-icon-art {
+      font-size: 2.4rem;
+      line-height: 1;
+    }
+
+    .desktop-icon-label {
+      font-size: 0.82rem;
+      font-weight: 600;
+      text-align: center;
+      text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55);
+    }
+
+    .desktop-taskbar {
+      position: absolute;
+      left: 1.25rem;
+      bottom: 1.25rem;
+      z-index: 30;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.55rem 0.95rem;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 12px;
+      background: rgba(14, 21, 42, 0.9);
+      color: #fff;
+      font: inherit;
+      font-weight: 600;
+      font-size: 0.88rem;
+      cursor: pointer;
+      transition: background 0.18s ease;
+    }
+
+    .desktop-taskbar:hover {
+      background: rgba(40, 56, 100, 0.95);
+    }
   `,
 })
-export class DesktopPage implements OnInit {
-  private readonly files = inject(FilesService);
-  private readonly fb = inject(FormBuilder);
+export class DesktopPage {
+  private readonly auth = inject(AuthService);
+  private readonly router = inject(Router);
 
-  /** Ścieżka bieżącego katalogu (pusta = katalog główny użytkownika). */
-  readonly path = signal('');
-  readonly items = signal<FileEntry[]>([]);
-  readonly loading = signal(true);
-  readonly uploading = signal(false);
-  readonly error = signal<string | null>(null);
-  readonly notice = signal<string | null>(null);
-  readonly busyPath = signal<string | null>(null);
+  readonly me = this.auth.me;
+  readonly roleLabel = computed(() => (this.me()?.role === 'admin' ? 'Administrator' : 'Użytkownik'));
 
-  readonly folderFormOpen = signal(false);
-  readonly creatingFolder = signal(false);
-  readonly folderFormError = signal<ApiError | null>(null);
+  readonly menuOpen = signal(false);
+  readonly userMenuOpen = signal(false);
 
-  readonly folderForm = this.fb.nonNullable.group({
-    name: ['', Validators.required],
-  });
+  readonly computerOpen = signal(false);
+  readonly computerMinimized = signal(false);
 
-  /** Ścieżki i nazwy kolejnych segmentów bieżącej lokalizacji. */
-  readonly crumbs = computed<{ name: string; path: string }[]>(() => {
-    const current = this.path();
-    if (current === '') {
-      return [];
-    }
-    const segments = current.split('/');
-    return segments.map((name, index) => ({
-      name,
-      path: segments.slice(0, index + 1).join('/'),
-    }));
-  });
+  private hideTimer: ReturnType<typeof setTimeout> | null = null;
 
-  ngOnInit(): void {
-    this.reload();
+  avatarUrl(username: string): string {
+    return `https://ui-avatars.com/api/?name=${encodeURIComponent(username)}&background=random`;
   }
 
-  reload(): void {
-    this.load(this.path());
+  revealMenu(): void {
+    this.clearHideTimer();
+    this.menuOpen.set(true);
   }
 
-  open(path: string): void {
-    this.load(path);
-  }
-
-  childPath(name: string): string {
-    const base = this.path();
-    return base === '' ? name : `${base}/${name}`;
-  }
-
-  formatSize(size: number | null): string {
-    return formatBytes(size);
-  }
-
-  formatModified(iso: string): string {
-    return formatDate(iso);
-  }
-
-  toggleFolderForm(): void {
-    this.folderFormOpen.update((open) => !open);
-    this.folderForm.reset({ name: '' });
-    this.folderFormError.set(null);
-  }
-
-  folderFieldError(): string | null {
-    return fieldError(this.folderFormError(), 'name');
-  }
-
-  createFolder(): void {
-    if (this.creatingFolder()) {
+  /** Zwija menu po chwili — dzięki opóźnieniu kursor zdąży wrócić na belkę. */
+  scheduleHideMenu(): void {
+    if (this.userMenuOpen()) {
       return;
     }
+    this.clearHideTimer();
+    this.hideTimer = setTimeout(() => this.menuOpen.set(false), MENU_HIDE_DELAY);
+  }
 
-    this.folderForm.markAllAsTouched();
-    if (this.folderForm.invalid) {
-      return;
+  toggleMenu(): void {
+    this.menuOpen.update((open) => !open);
+  }
+
+  toggleUserMenu(event: MouseEvent): void {
+    event.stopPropagation();
+    this.revealMenu();
+    this.userMenuOpen.update((open) => !open);
+  }
+
+  closeUserMenu(): void {
+    this.userMenuOpen.set(false);
+  }
+
+  logout(): void {
+    this.closeUserMenu();
+    this.auth.logout();
+    void this.router.navigateByUrl('/login');
+  }
+
+  openComputer(): void {
+    this.computerOpen.set(true);
+    this.computerMinimized.set(false);
+  }
+
+  closeComputer(): void {
+    this.computerOpen.set(false);
+    this.computerMinimized.set(false);
+  }
+
+  minimizeComputer(): void {
+    this.computerMinimized.set(true);
+  }
+
+  private clearHideTimer(): void {
+    if (this.hideTimer !== null) {
+      clearTimeout(this.hideTimer);
+      this.hideTimer = null;
     }
-
-    this.creatingFolder.set(true);
-    this.error.set(null);
-    this.notice.set(null);
-    this.folderFormError.set(null);
-
-    this.files.createFolder(this.path(), this.folderForm.getRawValue().name.trim()).subscribe({
-      next: () => {
-        this.creatingFolder.set(false);
-        this.folderFormOpen.set(false);
-        this.folderForm.reset({ name: '' });
-        this.notice.set('Folder został utworzony.');
-        this.reload();
-      },
-      error: (err: unknown) => {
-        this.creatingFolder.set(false);
-        const apiError = toApiError(err);
-        this.folderFormError.set(apiError);
-        this.error.set(apiError.message);
-      },
-    });
-  }
-
-  onFilesSelected(event: Event): void {
-    const input = event.target as HTMLInputElement;
-    const selected = Array.from(input.files ?? []);
-    input.value = '';
-
-    if (selected.length === 0 || this.uploading()) {
-      return;
-    }
-
-    this.uploading.set(true);
-    this.error.set(null);
-    this.notice.set(null);
-
-    from(selected)
-      .pipe(concatMap((file) => this.files.upload(this.path(), file)))
-      .subscribe({
-        next: () => undefined,
-        error: (err: unknown) => {
-          this.uploading.set(false);
-          this.error.set(toApiError(err).message);
-          this.reload();
-        },
-        complete: () => {
-          this.uploading.set(false);
-          this.notice.set(selected.length === 1 ? 'Plik został wgrany.' : `Wgrano pliki: ${selected.length}.`);
-          this.reload();
-        },
-      });
-  }
-
-  download(entry: FileEntry): void {
-    const path = this.childPath(entry.name);
-    this.busyPath.set(path);
-    this.error.set(null);
-    this.notice.set(null);
-
-    this.files.download(path).subscribe({
-      next: (blob) => {
-        this.saveBlob(blob, entry.name);
-        this.busyPath.set(null);
-      },
-      error: (err: unknown) => {
-        this.busyPath.set(null);
-        this.error.set(toApiError(err).message);
-      },
-    });
-  }
-
-  remove(entry: FileEntry): void {
-    const path = this.childPath(entry.name);
-    const label = entry.type === 'folder' ? 'folder' : 'plik';
-    if (!window.confirm(`Usunąć ${label} „${entry.name}”?`)) {
-      return;
-    }
-
-    this.busyPath.set(path);
-    this.error.set(null);
-    this.notice.set(null);
-
-    this.files.remove(path).subscribe({
-      next: () => {
-        this.busyPath.set(null);
-        this.notice.set(entry.type === 'folder' ? 'Folder został usunięty.' : 'Plik został usunięty.');
-        this.reload();
-      },
-      error: (err: unknown) => {
-        this.busyPath.set(null);
-        this.error.set(toApiError(err).message);
-      },
-    });
-  }
-
-  private load(path: string): void {
-    this.loading.set(true);
-    this.error.set(null);
-    this.notice.set(null);
-
-    this.files.list(path).subscribe({
-      next: (listing) => {
-        this.path.set(listing.path);
-        this.items.set(listing.items);
-        this.loading.set(false);
-      },
-      error: (err: unknown) => {
-        this.loading.set(false);
-        this.error.set(toApiError(err).message);
-      },
-    });
-  }
-
-  private saveBlob(blob: Blob, filename: string): void {
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    link.click();
-    URL.revokeObjectURL(url);
   }
 }
