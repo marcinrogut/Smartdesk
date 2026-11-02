@@ -1,0 +1,40 @@
+<?xml version="1.0"?>
+<ruleset xmlns="http://pmd.sf.net/ruleset/1.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://pmd.sf.net/ruleset/1.0.0
+                             http://pmd.sf.net/ruleset_xml_schema.xsd"
+         name="PSR-12">
+    <description>PSR-12: Extended Coding Style Guide</description>
+
+    <arg name="basepath" value="."/>
+    <arg name="colors"/>
+    <arg name="parallel" value="75"/>
+    <arg value="p"/>
+
+    <rule ref="PSR12"/>
+
+    <!-- Plik bootstrapu z założenia definiuje stałe i wykonuje kod inicjalizacyjny. -->
+    <rule ref="PSR1.Files.SideEffects">
+        <exclude-pattern>*/src/bootstrap.php</exclude-pattern>
+    </rule>
+
+    <rule ref="Generic.Files.LineLength">
+        <properties>
+            <property name="lineLimit" value="120"/>
+            <property name="absoluteLineLimit" value="120"/>
+        </properties>
+    </rule>
+
+    <rule ref="Generic.WhiteSpace.ScopeIndent">
+        <properties>
+            <property name="tabIndent" value="false"/>
+        </properties>
+    </rule>
+
+    <file>src/</file>
+    <file>public/</file>
+
+    <exclude-pattern>*/vendor/*</exclude-pattern>
+    <exclude-pattern>*/tests/*</exclude-pattern>
+    <exclude-pattern>*/node_modules/*</exclude-pattern>
+</ruleset>
