@@ -140,42 +140,65 @@ jobs:
             bye
           "
 
-      - name: Ensure API_SECRET in production .env
+      # Zdalny .env jest źródłem prawdy: jeśli istnieje, workflow tylko dopisuje
+      # brakujący API_SECRET i niczego nie nadpisuje. Gdy pliku nie ma, tworzymy
+      # go z sekretów GitHuba (bez tego aplikacja spada na domyślny profil dev).
+      - name: Ensure production .env
         env:
           FTP_SERVER: ${{ secrets.FTP_SERVER }}
           FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
           FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
           FTP_PROJECT_ROOT: ${{ vars.FTP_PROJECT_ROOT }}
           API_SECRET: ${{ secrets.API_SECRET }}
+          SMARTDESK_DB_HOST: ${{ secrets.SMARTDESK_DB_HOST }}
+          SMARTDESK_DB_NAME: ${{ secrets.SMARTDESK_DB_NAME }}
+          SMARTDESK_DB_USER: ${{ secrets.SMARTDESK_DB_USER }}
+          SMARTDESK_DB_PASS: ${{ secrets.SMARTDESK_DB_PASS }}
         run: |
-          if [ -z "$API_SECRET" ]; then
-            echo "::error::GitHub secret API_SECRET is not set"
-            exit 1
-          fi
+          for name in API_SECRET SMARTDESK_DB_HOST SMARTDESK_DB_NAME SMARTDESK_DB_USER SMARTDESK_DB_PASS; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Brak sekretu $name"
+              exit 1
+            fi
+          done
+
+          # Brak zdalnego .env nie może przerywać kroku - obsługujemy go niżej.
           lftp -u "$FTP_USERNAME","$FTP_PASSWORD" "$FTP_SERVER" -e "
             set ftp:ssl-allow no;
             set ftp:passive-mode yes;
             cd $FTP_PROJECT_ROOT;
             get .env -o .env.remote;
             bye
-          "
-          if [ ! -f .env.remote ]; then
-            echo "::error::Remote .env not found at $FTP_PROJECT_ROOT — utwórz go ręcznie na serwerze"
-            exit 1
-          fi
-          if grep -q '^API_SECRET=' .env.remote; then
-            echo "✅ API_SECRET już jest w zdalnym .env — nic nie zmieniam"
-          else
+          " || true
+
+          if [ -f .env.remote ]; then
+            if grep -q '^API_SECRET=' .env.remote; then
+              echo "✅ Zdalny .env istnieje i ma API_SECRET — nic nie zmieniam"
+              exit 0
+            fi
             printf '\nAPI_SECRET=%s\n' "$API_SECRET" >> .env.remote
-            lftp -u "$FTP_USERNAME","$FTP_PASSWORD" "$FTP_SERVER" -e "
-              set ftp:ssl-allow no;
-              set ftp:passive-mode yes;
-              cd $FTP_PROJECT_ROOT;
-              put .env.remote -o .env;
-              bye
-            "
-            echo "✅ API_SECRET dopisany do zdalnego .env"
+            echo "➡️ Dopisuję API_SECRET do istniejącego .env"
+          else
+            {
+              echo 'APP_ENV=production'
+              printf 'API_SECRET=%s\n' "$API_SECRET"
+              printf 'SMARTDESK_DB_HOST=%s\n' "$SMARTDESK_DB_HOST"
+              printf 'SMARTDESK_DB_NAME=%s\n' "$SMARTDESK_DB_NAME"
+              printf 'SMARTDESK_DB_USER=%s\n' "$SMARTDESK_DB_USER"
+              printf 'SMARTDESK_DB_PASS=%s\n' "$SMARTDESK_DB_PASS"
+              echo 'SMARTDESK_DB_CHARSET=utf8mb4'
+            } > .env.remote
+            echo "➡️ Zdalny .env nie istnieje — tworzę go z sekretów GitHuba"
           fi
+
+          lftp -u "$FTP_USERNAME","$FTP_PASSWORD" "$FTP_SERVER" -e "
+            set ftp:ssl-allow no;
+            set ftp:passive-mode yes;
+            cd $FTP_PROJECT_ROOT;
+            put .env.remote -o .env;
+            bye
+          "
+          echo "✅ .env wgrany do $FTP_PROJECT_ROOT"
 
       - name: Deployment summary
         if: always()
